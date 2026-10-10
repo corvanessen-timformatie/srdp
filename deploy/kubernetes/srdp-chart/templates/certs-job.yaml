@@ -108,6 +108,23 @@ spec:
               secretJson ${USER} >> ${USER}-cert.json
             }
 
+            # CA certificate only, for clients that just verify the server.
+            function caSecretJson {
+              cat<<EOF
+              {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {
+                  "ca.crt": "$(base64 -w 0 ./ca.crt)"
+                },
+                "metadata": {
+                  "name": "postgres-ca"
+                },
+                "type": "Opaque"
+              }
+            EOF
+            }
+
             cd /secret
 
             # Create a CA key and cert for signing other certs
@@ -123,6 +140,8 @@ spec:
             createSigningRequest zitadel
             signCertificate zitadel.csr zitadel.crt ca.crt ca.key
             createCertSecret zitadel
+
+            caSecretJson >> postgres-ca.json
         image: alpine/openssl:3.5.9@sha256:59c5cb51e536d40587667229468b007a2a6cae1705397e59e5f7774c08b74029
         imagePullPolicy: IfNotPresent
         name: create-certs
@@ -140,19 +159,21 @@ spec:
             export APISERVER=https://kubernetes.default.svc SERVICEACCOUNT=/var/run/secrets/kubernetes.io/serviceaccount
             export NAMESPACE=$(cat ${SERVICEACCOUNT}/namespace) TOKEN=$(cat ${SERVICEACCOUNT}/token) CACERT=${SERVICEACCOUNT}/ca.crt
 
+            # Create only: a Secret from an earlier run stays, so the three
+            # always come from the same CA.
             function uploadSecret {
-              USER=$1
               curl \
                 --cacert ${CACERT} \
                 --header "Authorization: Bearer ${TOKEN}" \
                 --header "Content-Type: application/json" \
                 -X POST ${APISERVER}/api/v1/namespaces/${NAMESPACE}/secrets \
-                --data "$(tr -d '\n' < /secret/${USER}-cert.json)" \
-                > /dev/null || echo "error uploading ${USER} secret: $?"
+                --data "$(tr -d '\n' < /secret/$1.json)" \
+                > /dev/null || echo "error uploading $1 secret: $?"
             }
 
-            uploadSecret postgres
-            uploadSecret zitadel
+            uploadSecret postgres-cert
+            uploadSecret zitadel-cert
+            uploadSecret postgres-ca
         volumeMounts:
           - mountPath: /secret
             name: secret

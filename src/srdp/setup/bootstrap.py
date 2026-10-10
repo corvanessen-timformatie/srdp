@@ -42,8 +42,8 @@ class DatabaseTarget(BaseModel):
     # Lowercase, SETUP_PASSWORDS__<ROLE> keys are lowercased.
     # None reuses the superuser as owner (DuckLake connects as the superuser).
     role: Identifier | None = None
-    # False leaves the target to another owner, e.g. the Bitnami subchart's
-    # auth.* fields own zitadel's role/database on Kubernetes.
+    # False leaves the target out of setup entirely, for a database another
+    # system owns and that setup should not even check.
     enabled: bool = True
 
 
@@ -65,6 +65,10 @@ class SetupSettings(BaseSettings):
     pg_user: str = Field(default="postgres")
     pg_password: SecretStr = Field(validation_alias="POSTGRES_PASSWORD")
     databases: list[DatabaseTarget]
+    # False for a Postgres whose databases and roles someone else creates, e.g.
+    # a managed instance. Setup then only checks that it can connect and that
+    # every enabled database exists, and never creates or changes anything.
+    manage_databases: bool = True
     # Keyed by role name, e.g. SETUP_PASSWORDS__MARQUEZ -> passwords["marquez"].
     passwords: dict[str, SecretStr] = Field(default_factory=dict)
 
@@ -91,6 +95,9 @@ class SetupSettings(BaseSettings):
         if any(target.role == self.pg_user for target in self.databases):
             msg = f"Role '{self.pg_user}' is the superuser, leave `role` out to use it."
             raise ValueError(msg)
+
+        if not self.manage_databases:
+            return self
 
         missing = sorted(
             target.role
@@ -146,6 +153,27 @@ def ensure_target(cur: psycopg2.extensions.cursor, target: DatabaseTarget, setti
         sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(target.name), sql.Identifier(owner)),
     )
     logger.info("Created database '%s' (owner '%s').", target.name, owner)
+
+
+def check_targets(cur: psycopg2.extensions.cursor, settings: SetupSettings) -> None:
+    """Fail unless every enabled target database already exists.
+
+    Used when ``manage_databases`` is off. It changes nothing.
+
+    Args:
+        cur: A cursor connected to Postgres.
+        settings: Validated settings, holding the targets.
+
+    Raises:
+        RuntimeError: If one or more databases are missing.
+    """
+    missing = [
+        target.name for target in settings.databases if target.enabled and not _database_exists(cur, target.name)
+    ]
+    if missing:
+        msg = f"Database(s) {', '.join(missing)} do not exist, and manage_databases is off. Create them first."
+        raise RuntimeError(msg)
+    logger.info("manage_databases is off, all databases exist.")
 
 
 def _connect_with_retry(
@@ -204,6 +232,9 @@ def bootstrap_databases(settings: SetupSettings | None = None) -> None:
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
+            if not settings.manage_databases:
+                check_targets(cur, settings)
+                return
             for target in settings.databases:
                 if not target.enabled:
                     logger.info("Skipping '%s', disabled in setup config.", target.name)

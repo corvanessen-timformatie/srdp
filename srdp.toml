@@ -10,6 +10,9 @@ registry = "rg.nl-ams.scw.cloud/srdp-registry"
 # Read by the srdp-setup service. The chart keeps its own copy in
 # setup.databases, keep them in step.
 [setup]
+# false for a Postgres whose databases and roles someone else creates. Setup then
+# only checks that it can connect and that the databases exist.
+manage_databases = true
 
 [[setup.databases]]
 name = "zitadel"
