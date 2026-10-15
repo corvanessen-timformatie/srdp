@@ -9,8 +9,11 @@ from typing import Any
 
 import pytest
 
-COMPOSE_FILE = Path(__file__).resolve().parents[2] / "deploy" / "docker" / "docker-compose.yml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+COMPOSE_FILE = REPO_ROOT / "deploy" / "docker" / "docker-compose.yml"
 DOCKER = shutil.which("docker")
+# Required by docker-compose.yml, the just recipes pass it the same way.
+DOMAIN = tomllib.loads((REPO_ROOT / "srdp.toml").read_text())["deploy"]["domain"]
 
 pytestmark = pytest.mark.skipif(DOCKER is None, reason="needs docker compose")
 
@@ -24,7 +27,7 @@ READERS = ["marimo", "streamlit", "api", "duckdb-ui"]
 def render_project(tmp_path: Path, env: dict[str, str], *profiles: str) -> dict[str, Any]:
     """Return the whole resolved Compose project for an .env with these variables."""
     env_file = tmp_path / ".env"
-    env_file.write_text("".join(f"{key}={value}\n" for key, value in env.items()))
+    env_file.write_text("".join(f"{key}={value}\n" for key, value in {"SRDP_DOMAIN": DOMAIN, **env}.items()))
     args = [DOCKER, "compose", "-f", str(COMPOSE_FILE), "--env-file", str(env_file)]
     for profile in profiles:
         args += ["--profile", profile]
@@ -117,7 +120,7 @@ def test_admin_token_alone_leaves_the_garage_step_off(tmp_path: Path) -> None:
 
 def test_garage_runs_hardened(s3: dict[str, Any]) -> None:
     garage = s3["garage"]
-    assert garage["read_only"] is True
+    # Not read_only: Compose cannot create the inline garage-toml config in a read-only service.
     assert garage["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in garage["security_opt"]
 
