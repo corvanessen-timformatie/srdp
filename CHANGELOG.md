@@ -23,6 +23,10 @@ All notable changes to SRDP are documented here. The format follows [Keep a Chan
 - `S3StorageBackend` stores the DuckLake data files in S3-compatible object storage (Scaleway, Hetzner, Garage) when `DUCKLAKE_STORAGE_BACKEND=s3` is set. Its settings live in their own `S3StorageSettings` (`DUCKLAKE_S3_*`), apart from the Postgres catalog settings. Endpoint, URL style and region are required, with no AWS defaults, and the DuckDB secret is scoped to the lake prefix. The default stays `local`, so nothing changes without the setting. An empty `DUCKLAKE_*` variable counts as unset. A catalog keeps the data path it was created with, so switching an existing catalog between `local` and `s3` needs a new catalog database. Part of #56.
 - `srdp.io.dbt_plugin`, a dbt-duckdb plugin that attaches DuckLake with the same storage settings as Dagster, so a dbt profile no longer needs its own copy of them.
 - ADR-0012, on how SRDP uses dlt with Dagster and DuckLake, with ADR-0002, ADR-0003 and ADR-0004 revised to secure by default.
+- `domain` in the `[deploy]` table of `srdp.toml`, the base domain of every hostname (#91).
+  The `Justfile` passes it to Docker Compose as `SRDP_DOMAIN`, to the certificates of `just docker-tls` and `just local-tls`, and to `just local-deploy`.
+  The production Helm recipes keep reading the domain from `values-prod.yaml`.
+- `ACME_CA_SERVER` in `deploy/docker/.env`, optional, to point Let's Encrypt at its staging directory while trying out a new domain.
 
 ### Security
 
@@ -70,6 +74,13 @@ All notable changes to SRDP are documented here. The format follows [Keep a Chan
 - For development only, the Compose override and `values-local.yaml` set `OPENSSL_armcap=0` on the Dagster containers, because `cryptography` 47 to 50 crashes on import on Colima on an Apple M4 (tested on that host only).
 - One Python build in every image, from one `python` and one `uv` reference. A test checks it.
 - Streamlit and Marimo are dependency groups in `pyproject.toml`, installed with `uv sync --group`.
+- Docker Compose routing moved from `config/traefik/traefik.yml` to `config/traefik/dynamic/srdp.yml`, which takes every hostname from `SRDP_DOMAIN` (#91).
+  `traefik.yml` keeps only Traefik's static configuration.
+  Compose mounts each routing file on its own, so an overlay can add its own routing file to `/etc/traefik/dynamic/`.
+  Routers edited in `traefik.yml` no longer apply, move them to `dynamic/srdp.yml`.
+- Docker Compose requires `SRDP_DOMAIN` and won't start without it, instead of falling back to `srdp.localhost` (#91).
+  The `just` recipes set it from `srdp.toml`, so `docker compose up` without `just`, including a production run, needs `SRDP_DOMAIN`.
+- The Traefik dashboard port 8080 is published by `docker-compose.override.yml` only, so a production run doesn't expose it.
 
 ### Removed
 
@@ -79,6 +90,11 @@ All notable changes to SRDP are documented here. The format follows [Keep a Chan
 ### Fixed
 
 - The `ducklake` database is now created at startup, before any consumer connects (#57).
+- `docker-compose.prod.yml` serves HTTPS with Let's Encrypt certificates and keeps the Traefik dashboard off (#92).
+  It gives Traefik a static configuration of its own, because Traefik ignored the flags it used to pass.
+  The local mkcert certificate no longer loads in production, where its absence broke every TLS handshake.
+  A production run now stops at startup when `ACME_EMAIL` is missing.
+- Git ignores `deploy/docker/letsencrypt/`, where Traefik keeps the Let's Encrypt account and certificate keys.
 
 ## [0.3.1] - 2026-09-27
 
