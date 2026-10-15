@@ -120,18 +120,14 @@ def test_admin_token_alone_leaves_the_garage_step_off(tmp_path: Path) -> None:
 
 def test_garage_runs_hardened(s3: dict[str, Any]) -> None:
     garage = s3["garage"]
-    # Not read_only: Compose cannot create the inline garage-toml config in a read-only service.
+    assert garage["read_only"] is True
     assert garage["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in garage["security_opt"]
 
 
-def test_garage_signs_with_the_region_the_consumers_use(tmp_path: Path) -> None:
-    # DuckDB signs every request with DUCKLAKE_S3_REGION, and Garage refuses
-    # a signature for another region.
-    project = render_project(tmp_path, {**GARAGE_ENV, "DUCKLAKE_S3_REGION": "nl-ams"}, "s3")
-    [mount] = project["services"]["garage"]["configs"]
+def test_garage_signs_with_the_region_the_consumers_use(s3: dict[str, Any]) -> None:
+    # DuckDB signs every request with DUCKLAKE_S3_REGION, and Garage refuses a signature for another region.
+    [mount] = s3["garage"]["configs"]
     assert mount["target"] == "/etc/garage.toml"
-    garage_toml = tomllib.loads(project["configs"][mount["source"]]["content"])
-    assert garage_toml["s3_api"]["s3_region"] == "nl-ams"
-    assert project["services"]["dagster-code"]["environment"]["DUCKLAKE_S3_REGION"] == "nl-ams"
-    assert not [v for v in project["services"]["garage"].get("volumes", []) if v["target"] == "/etc/garage.toml"]
+    garage_toml = tomllib.loads((COMPOSE_FILE.parent / "garage.toml").read_text())
+    assert garage_toml["s3_api"]["s3_region"] == s3["dagster-code"]["environment"]["DUCKLAKE_S3_REGION"]
