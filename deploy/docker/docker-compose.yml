@@ -5,6 +5,28 @@ x-ducklake-depends: &ducklake-depends
     postgres:
       condition: service_healthy
 
+# DuckLake storage, the same for every consumer. Defaults point to the bundled Garage.
+x-ducklake-storage: &ducklake-storage
+  DUCKLAKE_STORAGE_BACKEND: "${DUCKLAKE_STORAGE_BACKEND:-local}"
+  DUCKLAKE_S3_BUCKET: "${DUCKLAKE_S3_BUCKET:-ducklake}"
+  DUCKLAKE_S3_PREFIX: "${DUCKLAKE_S3_PREFIX:-compose}"
+  DUCKLAKE_S3_ENDPOINT: "${DUCKLAKE_S3_ENDPOINT:-garage:3900}"
+  DUCKLAKE_S3_URL_STYLE: "${DUCKLAKE_S3_URL_STYLE:-path}"
+  DUCKLAKE_S3_REGION: "${DUCKLAKE_S3_REGION:-garage}"
+  DUCKLAKE_S3_USE_SSL: "${DUCKLAKE_S3_USE_SSL:-false}"
+
+# Merge exactly one into a consumer. Only dagster-code gets the writer key,
+# because a SQL console runs with the full authority of its S3 key.
+x-ducklake-writer: &ducklake-writer
+  <<: *ducklake-storage
+  DUCKLAKE_S3_KEY_ID: "${DUCKLAKE_S3_WRITER_KEY_ID:-}"
+  DUCKLAKE_S3_SECRET: "${DUCKLAKE_S3_WRITER_SECRET:-}"
+
+x-ducklake-reader: &ducklake-reader
+  <<: *ducklake-storage
+  DUCKLAKE_S3_KEY_ID: "${DUCKLAKE_S3_READER_KEY_ID:-}"
+  DUCKLAKE_S3_SECRET: "${DUCKLAKE_S3_READER_SECRET:-}"
+
 # Every pulled image is pinned to an exact version and digest. The chart
 # runs the same versions of these, and tests/deploy fails until they match.
 services:
@@ -46,6 +68,18 @@ services:
       SETUP_PASSWORDS__ZITADEL: "${ZITADEL_DATABASE_POSTGRES_USER_PASSWORD}"
       SETUP_PASSWORDS__DAGSTER: "${DAGSTER_PG_PASSWORD}"
       SETUP_PASSWORDS__MARQUEZ: "${MARQUEZ_DB_PASSWORD}"
+      # The optional Garage step ([setup.garage] in srdp.toml,
+      # src/srdp/setup/garage.py) runs only with SETUP_GARAGE_ENABLED=true,
+      # set in .env next to COMPOSE_PROFILES=s3. It creates the bucket and
+      # imports the writer and reader key the DuckLake services get, before any
+      # of them starts (they all wait for this service).
+      SETUP_GARAGE__ENABLED: "${SETUP_GARAGE_ENABLED:-false}"
+      SETUP_GARAGE__BUCKET: "${DUCKLAKE_S3_BUCKET:-ducklake}"
+      SETUP_GARAGE__ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:-}"
+      SETUP_GARAGE__WRITER_KEY_ID: "${DUCKLAKE_S3_WRITER_KEY_ID:-}"
+      SETUP_GARAGE__WRITER_SECRET: "${DUCKLAKE_S3_WRITER_SECRET:-}"
+      SETUP_GARAGE__READER_KEY_ID: "${DUCKLAKE_S3_READER_KEY_ID:-}"
+      SETUP_GARAGE__READER_SECRET: "${DUCKLAKE_S3_READER_SECRET:-}"
     volumes:
       - "../../srdp.toml:/etc/srdp/srdp.toml:ro"
     networks:
@@ -53,6 +87,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      garage:
+        condition: service_healthy
+        required: false
 
   # ---------------------------------------------
   # Reverse Proxy
@@ -60,12 +97,20 @@ services:
   traefik:
     image: traefik:v3.6.2@sha256:aaf0f6185419a50c74651448c1a5bf4606bd2d2ddb7b8749eed505d55bf8b8ea
     container_name: srdp-traefik
+    # The dashboard port (8080) is published by docker-compose.override.yml
+    # only, so a production run never exposes it.
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"
+    environment:
+      # Read by the routing templates in config/traefik/dynamic/.
+      SRDP_DOMAIN: "${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}"
     volumes:
       - "../../config/traefik/traefik.yml:/etc/traefik/traefik.yaml:ro"
+      # Each routing file is mounted on its own, so an overlay can add its own
+      # file to /etc/traefik/dynamic/ (a read-only directory mount would
+      # prevent that).
+      - "../../config/traefik/dynamic/srdp.yml:/etc/traefik/dynamic/srdp.yml:ro"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
@@ -74,7 +119,7 @@ services:
     networks:
       app:
         aliases:
-          - auth.srdp.localhost
+          - auth.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
     depends_on:
       zitadel:
         condition: service_healthy
@@ -118,7 +163,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ZITADEL_EXTERNALDOMAIN: auth.srdp.localhost
+      ZITADEL_EXTERNALDOMAIN: auth.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
       ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: true
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: "${ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD}"
@@ -147,7 +192,7 @@ services:
       - ZITADEL_API_URL=https://zitadel:8080
       - NEXT_PUBLIC_BASE_PATH=/ui/v2/login
       - ZITADEL_SERVICE_USER_TOKEN_FILE=/current-dir/login-client.pat
-      - CUSTOM_REQUEST_HEADERS=Host:auth.srdp.localhost
+      - CUSTOM_REQUEST_HEADERS=Host:auth.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
       - NODE_TLS_REJECT_UNAUTHORIZED=0
     volumes:
       - '.:/current-dir:ro'
@@ -174,15 +219,15 @@ services:
       - --reverse-proxy=true
       - --pass-host-header=true
       - --proxy-prefix=/oauth2
-      - --whitelist-domain=.srdp.localhost
+      - --whitelist-domain=.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
       - --set-xauthrequest=true
       - --provider-display-name=ZITADEL
-      - --oidc-issuer-url=https://auth.srdp.localhost
+      - --oidc-issuer-url=https://auth.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
       - --insecure-oidc-skip-issuer-verification=true
       - --ssl-insecure-skip-verify
       - --skip-provider-button
       - --cookie-name=_oauth2_proxy
-      - --cookie-domain=.srdp.localhost
+      - --cookie-domain=.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --pass-authorization-header=false
@@ -191,7 +236,7 @@ services:
       # access token this same session hands the user via /token) skip the
       # cookie/redirect flow entirely, for calling the API outside a browser.
       - --skip-jwt-bearer-tokens=true
-      - --extra-jwt-issuers=https://auth.srdp.localhost=${OIDC_CLIENT_ID}
+      - --extra-jwt-issuers=https://auth.${SRDP_DOMAIN:?set it in srdp.toml, use just docker-up}=${OIDC_CLIENT_ID}
     environment:
       OAUTH2_PROXY_CLIENT_ID: "${OIDC_CLIENT_ID}"
       OAUTH2_PROXY_CLIENT_SECRET: "${OIDC_CLIENT_SECRET}"
@@ -274,6 +319,7 @@ services:
       DUCKLAKE_PG_PASSWORD: "${POSTGRES_PASSWORD}"
       DUCKLAKE_PG_DB: ducklake
       DUCKLAKE_DATA_PATH: /data/ducklake
+      <<: *ducklake-writer
       MARQUEZ_URL: http://marquez:5000
     healthcheck:
       test: ["CMD", "uv", "run", "dagster", "api", "grpc-health-check", "-p", "3030"]
@@ -313,6 +359,7 @@ services:
       DUCKLAKE_PG_PASSWORD: "${POSTGRES_PASSWORD}"
       DUCKLAKE_PG_DB: ducklake
       DUCKLAKE_DATA_PATH: /data/ducklake
+      <<: *ducklake-reader
     networks:
       - app
       - db
@@ -334,6 +381,7 @@ services:
       DUCKLAKE_PG_PASSWORD: "${POSTGRES_PASSWORD}"
       DUCKLAKE_PG_DB: ducklake
       DUCKLAKE_DATA_PATH: /data/ducklake
+      <<: *ducklake-reader
     networks:
       - app
       - db
@@ -355,6 +403,7 @@ services:
       DUCKLAKE_PG_PASSWORD: "${POSTGRES_PASSWORD}"
       DUCKLAKE_PG_DB: ducklake
       DUCKLAKE_DATA_PATH: /data/ducklake
+      <<: *ducklake-reader
       DAGSTER_GRAPHQL_URL: http://dagster-webserver:3000/graphql
     networks:
       - app
@@ -378,11 +427,41 @@ services:
       DUCKLAKE_PG_PASSWORD: "${POSTGRES_PASSWORD}"
       DUCKLAKE_PG_DB: ducklake
       DUCKLAKE_DATA_PATH: /data/ducklake
+      <<: *ducklake-reader
     networks:
       - app
       - db
     volumes:
       - ducklake-data:/data/ducklake:ro
+
+  # ---------------------------------------------
+  # Garage: S3-compatible server for DuckLake on S3, only with the s3 profile
+  # (COMPOSE_PROFILES=s3). For local testing, not production storage.
+  # ---------------------------------------------
+  garage:
+    profiles: [s3]
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    container_name: srdp-garage
+    # Root without capabilities, the shell-less image cannot chown garage-data.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      GARAGE_RPC_SECRET: "${GARAGE_RPC_SECRET:-}"
+      GARAGE_ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:-}"
+    configs:
+      - source: garage-toml
+        target: /etc/garage.toml
+    volumes:
+      - garage-data:/var/lib/garage
+    networks:
+      - db
+    healthcheck:
+      # The image has no shell, so the exec form calls the binary directly.
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # ---------------------------------------------
   # Marquez (OpenLineage backend + UI)
@@ -433,6 +512,13 @@ services:
     networks:
       - app
 
+
+# A file, because a read-only service cannot get inline config content.
+# The secrets come from .env, Garage reads them from the environment.
+configs:
+  garage-toml:
+    file: ./garage.toml
+
 networks:
   app:
     name: srdp-app
@@ -446,3 +532,5 @@ volumes:
     name: srdp-dagster-compute-logs
   ducklake-data:
     name: srdp-ducklake-data
+  garage-data:
+    name: srdp-garage-data

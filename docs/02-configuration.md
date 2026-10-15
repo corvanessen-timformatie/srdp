@@ -14,6 +14,15 @@ There are two options:
 Both options require mkcert for local TLS certificates.
 The `*.srdp.localhost` domains resolve to your own machine by themselves, so no hosts-file entries are needed.
 
+### Using another domain
+
+The base domain of every hostname is `domain` in the `[deploy]` table of `srdp.toml`.
+To use another one, change it there before the first start, then run the TLS recipe of your option and start the stack.
+The `just` recipes pass it to Docker Compose and to the local Helm deploy, so every hostname from `auth.<domain>` to `dagster.<domain>` follows it.
+Docker Compose gets it as `SRDP_DOMAIN` and won't start without it, so `docker compose up` without `just` needs it too, for example `SRDP_DOMAIN=srdp.localhost docker compose up`.
+Zitadel records its domain when it starts for the first time.
+A domain outside `.localhost` also needs DNS records that point its hostnames at your machine.
+
 ---
 
 ## Option A: Docker Compose
@@ -43,6 +52,17 @@ cp deploy/docker/.env.example deploy/docker/.env
 
 Fill in the empty values in `deploy/docker/.env`, which are required, and the comment above each one says how to generate it.
 You will need to update `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` after you create the OIDC application in Zitadel; see [First boot: create the Zitadel OIDC application](#first-boot-create-the-zitadel-oidc-application) below.
+
+DuckLake keeps its Parquet files in the `ducklake-data` volume by default.
+To keep them in an S3 bucket on the bundled Garage server instead, set these in `.env`:
+
+- `COMPOSE_PROFILES=s3` starts Garage.
+- `SETUP_GARAGE_ENABLED=true` turns on the Garage step of `srdp-setup`, which creates the bucket and imports the two keys before any DuckLake service starts.
+- `DUCKLAKE_STORAGE_BACKEND=s3` moves DuckLake to the bucket.
+- The four `DUCKLAKE_S3_*_KEY_ID` and `DUCKLAKE_S3_*_SECRET` values and the two `GARAGE_*` secrets go in as `.env.example` describes.
+
+The Garage step's other settings live in the `[setup.garage]` table of `srdp.toml`.
+Only set `SETUP_GARAGE_ENABLED=true` together with the `s3` profile, because the step waits for Garage and fails if it never starts.
 
 ### 4) Start the stack
 
@@ -138,7 +158,7 @@ If the login name differs, check it under **Users** in the Zitadel console.
 1. Create (or open) a project, then add an application of type **Web**.
 2. Use the **Code** authentication flow (client ID + secret).
 3. Add a redirect URI `https://<host>/oauth2/callback` for each host that OAuth2-Proxy protects.
-   The host list is the `oauth2-proxy` router rule in `config/traefik/traefik.yml`.
+   The host list is the `oauth2-proxy` router rule in `config/traefik/dynamic/srdp.yml`.
    Docker Compose uses no port suffix, and the local `kind` cluster needs `:18443` on every URL (see step 2 of Option B).
 
 Zitadel then shows a **Client ID** and **Client Secret**.
