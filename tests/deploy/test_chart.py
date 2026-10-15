@@ -739,6 +739,12 @@ def compose_images() -> list[str]:
     return [re.sub(r"\$\{\w+:-(.*)\}", r"\1", image) for image in images]
 
 
+def compose_profile_images() -> set[str]:
+    """Return the names of images whose Compose service only starts with a profile, e.g. Garage with `s3`."""
+    compose = yaml.safe_load((REPO_ROOT / "deploy" / "docker" / "docker-compose.yml").read_text())
+    return {split_image(s["image"])[0] for s in compose["services"].values() if "image" in s and s.get("profiles")}
+
+
 FROM_LINE = re.compile(r"FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
 
 
@@ -767,6 +773,7 @@ def dockerfile_bases() -> list[tuple[str, str]]:
 RENDERS = {
     "default": (("values.yaml",), ()),
     "local": (("values.yaml", "values-local.yaml"), ()),
+    "local-s3": (("values.yaml", "values-local.yaml", "values-local-s3.yaml"), ()),
     "prod": (("values-prod.example.yaml",), ()),
     "prod-with-metrics": (("values-prod.example.yaml",), ("zitadel-db.metrics.enabled=true",)),
 }
@@ -794,13 +801,16 @@ def test_every_dockerfile_base_is_pinned_by_digest() -> None:
     assert [(path, image) for path, image in bases if not DIGEST.search(image)] == []
 
 
-@pytest.mark.parametrize("case", ["local", "prod"])
+@pytest.mark.parametrize("case", ["local", "local-s3", "prod"])
 def test_compose_and_chart_run_the_same_versions(case: str) -> None:
     """Every image Compose pulls runs in the chart too, at the same tag, and the same digest where both pin one."""
     values_files, set_values = RENDERS[case]
     chart = [split_image(i) for i in manifest_images(render(*values_files, set_values=set_values))]
     for name, tag, digest in map(split_image, compose_images()):
         versions = {(t, d) for n, t, d in chart if n == name}
+        # A profile-only service, such as Garage, runs in the chart only with its overlay.
+        if not versions and name in compose_profile_images() and case != "local-s3":
+            continue
         assert versions, f"{name} is not in the chart"
         for chart_tag, chart_digest in versions:
             assert chart_tag == tag, f"{name}: chart {chart_tag}, Compose {tag}"
