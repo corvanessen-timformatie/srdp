@@ -1,5 +1,6 @@
 """Render the Helm chart with `helm template` and check its contract with the Compose stack."""
 
+import json
 import re
 import shlex
 import shutil
@@ -998,3 +999,77 @@ def test_compose_zitadel_init_matches_the_chart() -> None:
         env = compose[name].get("environment", {})
         assert not [var for var in env if var.startswith("ZITADEL_DATABASE_POSTGRES_ADMIN")], name
 
+
+# A fake Kubernetes Secrets API for the certs job: one JSON file per Secret in $SECRET_STORE.
+STUB_KUBE_CURL = """#!/usr/bin/env python3
+import json, os, pathlib, sys
+args, method, data, fail, url = sys.argv[1:], "GET", "", False, ""
+it = iter(args)
+for a in it:
+    if a == "-X": method = next(it)
+    elif a == "--data": data = next(it)
+    elif a in ("--cacert", "--header"): next(it)
+    elif a.startswith("-"): fail = fail or "f" in a
+    else: url = a
+store = pathlib.Path(os.environ["SECRET_STORE"])
+name = url.rstrip("/").rsplit("/", 1)[-1]
+if method == "POST":
+    secret = json.loads(data) if data else {}
+    name = secret.get("metadata", {}).get("name", "")
+    target = store / f"{name}.json"
+    if not name or target.exists(): sys.exit(22 if fail else 0)
+    target.write_text(json.dumps(secret, indent=2))
+    sys.exit(0)
+target = store / f"{name}.json"
+if not target.exists(): sys.exit(22 if fail else 0)
+if method == "PUT": target.write_text(json.dumps(json.loads(data), indent=2))
+else: print(target.read_text())
+"""
+
+
+def run_apply_certs(tmp_path: Path, existing: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    """Run the certs job's apply-certs script against a fake API holding these Secrets, and return its Secrets."""
+    job = find(render("values.yaml"), "Job", "create-certs")
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    store = tmp_path / "secrets"
+    store.mkdir()
+    for name, data in existing.items():
+        (store / f"{name}.json").write_text(json.dumps({"metadata": {"name": name}, "data": data}, indent=2))
+    stub = tmp_path / "curl"
+    stub.write_text(STUB_KUBE_CURL)
+    stub.chmod(0o755)
+    # Fixed argv, the script under test is the rendered one. bash instead of the image's ash.
+    result = subprocess.run(  # noqa: S603
+        ["bash", "-c", container["command"][-1]],  # noqa: S607
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin", "SECRET_STORE": str(store)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return {path.stem: json.loads(path.read_text())["data"] for path in store.glob("*.json")}
+
+
+@pytest.mark.parametrize("stale", [None, "c3RhbGUtY2E="])
+def test_postgres_ca_follows_existing_server_cert(tmp_path: Path, stale: str | None) -> None:
+    """An upgrade keeps postgres-cert from the earlier release, so postgres-ca must take its CA, not a new one."""
+    existing = {
+        "postgres-cert": {"ca.crt": "b2xkLWNh", "tls.crt": "b2xkLWNydA==", "tls.key": "b2xkLWtleQ=="},
+        "zitadel-cert": {"ca.crt": "b2xkLWNh", "tls.crt": "eg==", "tls.key": "eg=="},
+    }
+    if stale:
+        existing["postgres-ca"] = {"ca.crt": stale}
+
+    secrets = run_apply_certs(tmp_path, existing)
+
+    assert secrets["postgres-ca"] == {"ca.crt": "b2xkLWNh"}
+    assert secrets["postgres-cert"] == existing["postgres-cert"]
+
+
+def test_certs_role_only_touches_cert_secrets() -> None:
+    """The hook pod must not read other Secrets, such as the Postgres superuser password."""
+    role = find(render("values.yaml"), "Role", "secret-creator")
+    for rule in role["rules"]:
+        if set(rule["verbs"]) - {"create"}:
+            assert rule["resourceNames"] == ["postgres-cert", "zitadel-cert", "postgres-ca"], rule

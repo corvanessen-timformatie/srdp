@@ -90,7 +90,8 @@ just prod-use-kubeconfig   # from repo root
 - **Changing an internal password**: these are service-to-service credentials, so change one only as a deliberate rotation.
   Change the value in its Secret, run `helm upgrade`, then restart the services that use it.
   Marquez restarts by itself. For Dagster, run `kubectl -n srdp rollout restart deploy/srdp-dagster-webserver deploy/srdp-dagster-webserver-read-only deploy/srdp-dagster-daemon deploy/srdp-dagster-user-deployments-srdp-etl`.
-  Zitadel waits in an init container until its new password works, so it needs no restart.
+  For Zitadel, run `kubectl -n srdp rollout restart deploy/srdp-zitadel`, because a running pod keeps the old password.
+  The new pod waits in an init container until its new password works.
 - **Master key format**: ZITADEL expects a 32-character master key string. Generate one, for example, with `tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32`.
 - **Password complexity**: Zitadel's first human/admin password must include uppercase, lowercase, digits, and at least one symbol. For example, use `SrdpTest123!` rather than `srdpTest123`.
 
@@ -119,7 +120,8 @@ Replace every occurrence of the old LB IP in `values-prod.yaml` with `<LB_IP>.ni
 
 ### C. Enable Zitadel + OAuth2-Proxy
 
-The apps and the `srdp-setup` Job stay off until the final deploy.
+The apps stay off until the final deploy.
+The `srdp-setup` Job runs from this step on, because it creates Zitadel's database, so every Secret from section 5 must exist before you run it.
 
 ```bash
 just prod-auth-only
