@@ -361,7 +361,7 @@ def test_only_the_traefik_stage_leaves_the_setup_job_off(variable: str, setup_jo
 @pytest.mark.parametrize(
     ("variable", "expected"),
     [
-        ("prod_traefik_only_args", {"srdp-traefik", "hub"}),
+        ("prod_traefik_only_args", {"srdp-traefik"}),
         ("prod_auth_only_args", {"srdp-traefik", "hub", "srdp-zitadel", "srdp-zitadel-login", "srdp-oauth2-proxy"}),
     ],
 )
@@ -1101,10 +1101,3 @@ def test_login_gate_is_mandatory(gate: str, app: str) -> None:
     others = tuple(f"{a}.enabled=false" for a in GATED if a != app)
     error = render_error("values.yaml", set_values=(*others, f"{app}.enabled=true", f"{gate}.enabled=false"))
     assert f"mandatory while {app} runs" in error
-
-
-def test_traefik_only_stage_runs_nothing_behind_the_gate() -> None:
-    manifests = render("values-prod.example.yaml", set_values=tuple(just_evaluate("prod_traefik_only_args")))
-    names = {name for name, _ in pod_specs(manifests)}
-    assert "srdp-traefik" in names
-    assert names <= {"srdp-traefik", "create-certs"}, names
