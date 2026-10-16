@@ -99,7 +99,7 @@ The production values template enables PostgreSQL replication (`architecture: re
 
 ## 6) Deploy with Helm (staged rollout)
 
-### A. Bring up Traefik and the hub page only (to get the LB IP)
+### A. Bring up Traefik only (to get the LB IP)
 
 ```bash
 just prod-traefik-only

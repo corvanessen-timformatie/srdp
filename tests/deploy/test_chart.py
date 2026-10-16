@@ -1073,3 +1073,38 @@ def test_certs_role_only_touches_cert_secrets() -> None:
     for rule in role["rules"]:
         if set(rule["verbs"]) - {"create"}:
             assert rule["resourceNames"] == ["postgres-cert", "zitadel-cert", "postgres-ca"], rule
+
+
+@pytest.mark.parametrize("case", ["local", "prod"])
+def test_zitadel_wait_verifies_postgres(case: str) -> None:
+    """The login probe sends Zitadel's password, so it must verify the server first."""
+    values_files, set_values = RENDERS[case]
+    manifests = render(*values_files, set_values=set_values)
+    names = [("Deployment", "srdp-zitadel"), ("Job", "srdp-zitadel-init"), ("Job", "srdp-zitadel-setup")]
+    for kind, name in names:
+        spec = find(manifests, kind, name)["spec"]["template"]["spec"]
+        [wait] = [c for c in spec["initContainers"] if c["name"] == "wait-for-zitadel-db"]
+        env = {e["name"]: e.get("value") for e in wait["env"]}
+        assert env["PGSSLMODE"] == "verify-full", name
+        mount = {m["name"]: m["mountPath"] for m in wait["volumeMounts"]}["db-ssl-ca-crt"]
+        assert env["PGSSLROOTCERT"] == f"{mount}/ca.crt", name
+        assert "db-ssl-ca-crt" in {v["name"] for v in spec["volumes"]}, name
+
+
+GATED = ["hub", "dagster", "marimo", "quarto", "streamlit", "api", "duckdbUi", "marquez", "setup"]
+
+
+@pytest.mark.parametrize("gate", ["zitadel", "oauth2-proxy"])
+@pytest.mark.parametrize("app", GATED)
+def test_login_gate_is_mandatory(gate: str, app: str) -> None:
+    """Any single app behind the gate needs Zitadel and oauth2-proxy."""
+    others = tuple(f"{a}.enabled=false" for a in GATED if a != app)
+    error = render_error("values.yaml", set_values=(*others, f"{app}.enabled=true", f"{gate}.enabled=false"))
+    assert f"mandatory while {app} runs" in error
+
+
+def test_traefik_only_stage_runs_nothing_behind_the_gate() -> None:
+    manifests = render("values-prod.example.yaml", set_values=tuple(just_evaluate("prod_traefik_only_args")))
+    names = {name for name, _ in pod_specs(manifests)}
+    assert "srdp-traefik" in names
+    assert names <= {"srdp-traefik", "create-certs"}, names
