@@ -124,7 +124,7 @@ zitadel:
     # CA only, postgres-cert also holds the server key.
     dbSslCaCrtSecret: postgres-ca
     dbSslUserCrtSecret: zitadel-cert
-    # Replaces the chart's list: its login wait with the production host.
+    # Replaces the chart's list, to wait on the production host.
     initContainers:
       - name: wait-for-zitadel-db
         image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873

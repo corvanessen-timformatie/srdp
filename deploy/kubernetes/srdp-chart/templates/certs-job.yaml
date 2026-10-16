@@ -158,8 +158,7 @@ spec:
             uploadSecret postgres-cert
             uploadSecret zitadel-cert
 
-            # postgres-ca is the CA of the postgres-cert in the cluster, which can
-            # come from an earlier release, so Zitadel always trusts the server.
+            # Copy the CA of the postgres-cert in the cluster, which can be from an earlier release.
             CA=$(api -sf ${SECRETS}/postgres-cert | sed -n 's/.*"ca\.crt": *"\([^"]*\)".*/\1/p')
             [ -n "${CA}" ] || { echo "postgres-cert has no ca.crt"; exit 1; }
             BODY='{"apiVersion":"v1","kind":"Secret","type":"Opaque","metadata":{"name":"postgres-ca"},"data":{"ca.crt":"'${CA}'"}}'

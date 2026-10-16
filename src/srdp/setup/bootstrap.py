@@ -49,8 +49,7 @@ class DatabaseTarget(BaseModel):
     # Lowercase, SETUP_PASSWORDS__<ROLE> keys are lowercased.
     # None reuses the superuser as owner (DuckLake connects as the superuser).
     role: Identifier | None = None
-    # False leaves the target out of setup entirely, for a database another
-    # system owns and that setup should not even check.
+    # False leaves the target out of setup, checks included.
     enabled: bool = True
 
 
@@ -74,9 +73,7 @@ class SetupSettings(BaseSettings):
     pg_user: str = Field(default="postgres")
     pg_password: SecretStr = Field(validation_alias="POSTGRES_PASSWORD")
     databases: list[DatabaseTarget]
-    # False for a Postgres whose databases and roles someone else creates, e.g.
-    # a managed instance. Setup then only checks that it can connect and that
-    # every enabled database exists, and never creates or changes anything.
+    # False when someone else manages the databases, e.g. managed Postgres. Setup then only checks them.
     manage_databases: bool = True
     # Keyed by role name, e.g. SETUP_PASSWORDS__MARQUEZ -> passwords["marquez"].
     passwords: dict[str, SecretStr] = Field(default_factory=dict)

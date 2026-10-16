@@ -21,11 +21,9 @@ global:
 # Credentials: none live in this file. Every password and key comes from a
 # Secret with a fixed name, created outside the chart (External Secrets in the
 # cloud, templates/local-secrets.yaml in kind):
-#   srdp-postgres            postgres-password (superuser, read by Postgres,
-#                            srdp-setup and DuckLake, never by Zitadel),
+#   srdp-postgres            postgres-password (superuser, never read by Zitadel),
 #                            replication-password (replication only)
-#   srdp-zitadel             masterkey, db-password (the zitadel role, also
-#                            read by srdp-setup), admin-password (first admin)
+#   srdp-zitadel             masterkey, db-password, admin-password
 #   srdp-oauth2-proxy        client-id, client-secret, cookie-secret
 #   srdp-dagster-postgresql  postgresql-password
 #   srdp-marquez             db-password
@@ -59,8 +57,7 @@ traefik:
 zitadel-db:
   enabled: true
   fullnameOverride: "db-postgresql"
-  # Only the superuser comes from this subchart. srdp-setup creates the zitadel
-  # role and database, like every other one (setup.databases below).
+  # Only the superuser comes from this subchart, srdp-setup creates the zitadel role.
   auth:
     existingSecret: srdp-postgres
     secretKeys:
@@ -110,8 +107,7 @@ zitadel-db:
 zitadel:
   enabled: true
   zitadel:
-    # Zitadel uses the zitadel role only, never the superuser. srdp-setup creates
-    # it, the passwords come in as env below, the masterkey must be 32 characters.
+    # Zitadel uses its own role, never the superuser. The masterkey must be 32 characters.
     masterkeySecretName: srdp-zitadel
     configmapConfig:
       ExternalDomain: auth.srdp.localhost
@@ -575,8 +571,7 @@ setup:
     repository: srdp-setup
     platform: true
     pullPolicy: IfNotPresent
-  # false when someone else creates the databases and roles. The Job then only
-  # checks the connection and that the databases exist.
+  # false when someone else creates the databases and roles. The Job then only checks them.
   manageDatabases: true
   # The whole Job, retries included. It must cover the database wait plus the
   # Garage step's wait (DATABASE_WAIT_SECONDS and GARAGE_WAIT_SECONDS in
