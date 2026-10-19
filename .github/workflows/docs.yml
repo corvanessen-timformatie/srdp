@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - "zensical.toml"
+      - "architecture/**"
 permissions:
   contents: read
   pages: write
@@ -20,6 +21,12 @@ jobs:
       - uses: actions/configure-pages@v6
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: extractions/setup-just@v4
+      # The viewer is a build output, so the repository does not hold it.
+      - run: just c4-build
       - run: uvx zensical build --clean
       - uses: actions/upload-pages-artifact@v5
         with:

@@ -1,5 +1,5 @@
 ---
-title: 7. Contributing
+title: Contributing
 icon: lucide/git-pull-request
 ---
 

@@ -52,3 +52,12 @@ jobs:
       - run: uv sync --group dev --extra ducklake --extra openlineage --extra api --extra dbt
       - run: just chart-deps
       - run: uv run pytest tests
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: extractions/setup-just@v4
+      - run: just c4-validate

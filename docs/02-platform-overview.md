@@ -1,5 +1,5 @@
 ---
-title: 11. Platform Model
+title: Platform Overview
 icon: lucide/file-text
 ---
 
@@ -52,7 +52,7 @@ flowchart LR
 ```
 
 [ADR-0005](adr/0005-authorization-and-data-access.md) and [ADR-0006](adr/0006-deployment-and-project-isolation-model.md) define these concepts.
-The [architecture page](03-architecture.md) gives the full access model.
+The [architecture page](04-architecture.md) gives the full access model.
 
 ## Repository model
 
@@ -129,10 +129,13 @@ flowchart LR
 External data enters through the platform API and the landing zone.
 A Dagster asset can also pull data.
 The asset must validate the data before it loads it.
-Only Dagster writes to DuckLake ([ADR-0004](adr/0004-data-organization-and-ingestion.md)).
+Dagster and DuckLake work together.
+Dagster records the lineage and DuckLake keeps the catalog.
+So pipelines write to DuckLake through Dagster, including the dlt and dbt ones ([ADR-0004](adr/0004-data-organization-and-ingestion.md), [ADR-0012](adr/0012-dlt-alongside-dagster.md)).
+A writer outside Dagster needs a careful integration, or isolation from the data lake, to keep lineage and catalog correct.
 We have not built policy enforcement, OData, the landing zone, Prometheus and Grafana yet.
 We have also not built the project roles in Zitadel or read-only DuckLake access for apps.
-Until then, the rule that only Dagster writes is a design rule that the platform does not enforce.
+Until then, the rule that writes go through Dagster is a design rule that the platform does not enforce.
 The IO manager already writes DuckLake data to local disk or to S3.
 
 ## Configuration
@@ -141,7 +144,8 @@ The IO manager already writes DuckLake data to local disk or to S3.
 `srdp-project.toml` declares the code locations, services and endpoints of a project.
 Secrets stay out of both files.
 [ADR-0011](adr/0011-project-onboarding-and-extension.md) describes both files.
-Today `srdp.toml` only sets the image registry and the setup databases.
+Today `srdp.toml` holds only a few settings.
+Its shape is still open (issue #42).
 
 ## Deploying a project
 
@@ -151,7 +155,7 @@ A deployment needs three things.
 - Prebuilt images run every service, each at a pinned version. Platform images come from ghcr.io. Project images come from the registry in `srdp.toml`.
 - The `srdp` CLI turns them into a running platform on Docker Compose or on any Kubernetes cluster.
 
-You can run the full platform on your own machine to try it out, as the [configuration guide](02-configuration.md) shows.
+You can run the full platform on your own machine to try it out, as the [configuration guide](03-configuration.md) shows.
 
 You can reuse tools that you already run.
 
