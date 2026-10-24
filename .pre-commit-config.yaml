@@ -53,3 +53,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Warns only. An ADR that is still in progress may stay out of the menu.
+      - id: docs-nav
+        name: docs pages are in the nav
+        entry: uv run python scripts/check_docs_nav.py
+        language: system
+        files: ^(docs/.*\.md|zensical\.toml)$
+        pass_filenames: false
+        verbose: true

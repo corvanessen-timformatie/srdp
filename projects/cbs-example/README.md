@@ -6,7 +6,7 @@ It's the thing you'd copy and rename to start a new project, and it's what this 
 
 It shows two ways to define a pipeline against the same DuckLake catalog, Polars and dbt, a third pipeline style triggered by a push rather than a schedule, and several ways to read the result: a Streamlit dashboard, a Marimo notebook, DuckDB's own UI, and a small FastAPI surface, all under one Dagster code location.
 
-> **Note on this README:** the sections below "What this session added" are a draft. They cover platform-wide pieces (lineage, the API, DuckDB UI) that arguably belong in `docs/03-architecture.md` rather than a tenant project's README, written here first for review before being promoted there. See [ADR-0006](../../docs/adr/0006-deployment-and-project-isolation-model.md) on why that split matters.
+> **Note on this README:** the sections below "What this session added" are a draft. They cover platform-wide pieces (lineage, the API, DuckDB UI) that arguably belong in `docs/04-architecture.md` rather than a tenant project's README, written here first for review before being promoted there. See [ADR-0006](../../docs/adr/0006-deployment-and-project-isolation-model.md) on why that split matters.
 
 ## What's in here
 
@@ -62,8 +62,8 @@ just docker-up
 
 Zitadel doesn't know about `oauth2-proxy` until you tell it. On a fresh stack:
 
-1. Open `https://auth.srdp.localhost`, sign in as the first-instance admin (see `docs/02-configuration.md` for the default login name/password).
-2. Create a project and a **Web** app with the **Code** auth flow, redirect URIs for each service (`https://dagster.srdp.localhost/oauth2/callback`, `.../marimo...`, `.../streamlit...`, `.../srdp.localhost/oauth2/callback` for the hub; see `docs/02-configuration.md` for the full list).
+1. Open `https://auth.srdp.localhost`, sign in as the first-instance admin (see `docs/03-configuration.md` for the default login name/password).
+2. Create a project and a **Web** app with the **Code** auth flow, redirect URIs for each service (`https://dagster.srdp.localhost/oauth2/callback`, `.../marimo...`, `.../streamlit...`, `.../srdp.localhost/oauth2/callback` for the hub; see `docs/03-configuration.md` for the full list).
 3. Copy the generated client ID/secret into `deploy/docker/.env` (`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`), then `docker compose up -d --force-recreate oauth2-proxy`.
 
 This is the known, documented bootstrap gap (tracked as issue #35).
@@ -143,7 +143,7 @@ See `.github/instructions/dagster.instructions.md` for the Dagster conventions, 
 
 ## What this session added (draft, pending review)
 
-Everything below documents the full current stack: lineage, the API, DuckDB UI, and the push-based enrichment flow. Diagrams are plain Mermaid flowcharts drawn in [C4 model](https://c4model.com/) layers (System Context, then Container), not the literal `C4Context`/`C4Container` Mermaid diagram types, those exist but Zensical (this repo's docs site generator) doesn't officially support them ("doesn't work well on mobile," per its docs), while flowcharts are fully supported and already used in `docs/03-architecture.md`.
+Everything below documents the full current stack: lineage, the API, DuckDB UI, and the push-based enrichment flow. Diagrams are plain Mermaid flowcharts drawn in [C4 model](https://c4model.com/) layers (System Context, then Container), not the literal `C4Context`/`C4Container` Mermaid diagram types, those exist but Zensical (this repo's docs site generator) doesn't officially support them ("doesn't work well on mobile," per its docs), while flowcharts are fully supported and already used in `docs/04-architecture.md`.
 
 ### System context
 
